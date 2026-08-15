@@ -1,0 +1,261 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+
+local Genv = getgenv and getgenv() or _G
+if Genv.UNITdupe_Unload then
+    pcall(Genv.UNITdupe_Unload)
+end
+
+local function loadLibrary(url)
+    local urls = {
+        url,
+        url:gsub("joustingmatch/ObsidianUltra", "Crazy0z/Obsidian"),
+        url:gsub("joustingmatch/ObsidianUltra", "violin-suzutsuki/LinoriaLib"),
+    }
+    for _, u in ipairs(urls) do
+        local ok, src = pcall(function() return game:HttpGet(u, true) end)
+        if ok and type(src) == "string" and #src > 100 then
+            local fn = loadstring(src)
+            if fn then
+                local ran, mod = pcall(fn)
+                if ran and mod then return mod end
+            end
+        end
+    end
+    return nil
+end
+
+local Repo = "https://raw.githubusercontent.com/joustingmatch/ObsidianUltra/main/"
+local Library = loadLibrary(Repo .. "Library.lua")
+local ThemeManager = loadLibrary(Repo .. "addons/ThemeManager.lua")
+local SaveManager = loadLibrary(Repo .. "addons/SaveManager.lua")
+
+if not Library then return end
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+local TowerRemote = ReplicatedStorage:WaitForChild("LobbyRemotes", 10)
+    and ReplicatedStorage.LobbyRemotes:WaitForChild("TowerHandlerRemotes", 10)
+    and ReplicatedStorage.LobbyRemotes.TowerHandlerRemotes:WaitForChild("TowerHandlerFunction", 10)
+
+local PlayTimeRemote = ReplicatedStorage:WaitForChild("LobbyRemotes", 10)
+    and ReplicatedStorage.LobbyRemotes:WaitForChild("PlayTimeRewardsRemote", 10)
+
+if not TowerRemote then return end
+
+local IsProcessing = false
+local MobileGui = nil
+
+local function CalculateGrid(center, count, spacing)
+    local positions = table.create(count)
+    local cols = math.ceil(math.sqrt(count))
+    local half = (cols - 1) * spacing * 0.5
+
+    for i = 0, count - 1 do
+        local col = i % cols
+        local row = math.floor(i / cols)
+        local posX = center.X + (col * spacing) - half
+        local posZ = center.Z + (row * spacing) - half
+        positions[i + 1] = Vector3.new(posX, center.Y, posZ)
+    end
+    return positions
+end
+
+local function GetTargetPosition()
+    local character = LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if root then
+        return root.Position
+    end
+    return Vector3.new(0, 0, 0)
+end
+
+local function DeployTowers()
+    if not TowerRemote or IsProcessing then return end
+    IsProcessing = true
+
+    local slot = Options.SelectTowerSlot and Options.SelectTowerSlot.Value or "Tower1"
+    local count = Options.PlacementAmount and tonumber(Options.PlacementAmount.Value) or 10
+    local spacing = Options.PlacementSpacing and tonumber(Options.PlacementSpacing.Value) or 4
+    local delayTime = Options.PlacementDelay and tonumber(Options.PlacementDelay.Value) or 0.05
+
+    local targetPos = GetTargetPosition()
+    local positions = CalculateGrid(targetPos, count, spacing)
+    local normal = Vector3.new(0, 1, 0)
+
+    task.spawn(function()
+        for i = 1, #positions do
+            pcall(function()
+                TowerRemote:InvokeServer(
+                    "PlaceTower",
+                    slot,
+                    positions[i],
+                    normal,
+                    0,
+                    nil,
+                    false
+                )
+            end)
+            if delayTime > 0 then
+                task.wait(delayTime)
+            end
+        end
+        IsProcessing = false
+    end)
+end
+
+local function ClaimPlayTimeRewards()
+    if not PlayTimeRemote then return end
+    task.spawn(function()
+        for i = 1, 6 do
+            pcall(function()
+                PlayTimeRemote:FireServer("ClaimPlayTimeReward", i)
+            end)
+            task.wait(0.1)
+        end
+    end)
+end
+
+local function ToggleMobileButton(enable)
+    if MobileGui then
+        MobileGui:Destroy()
+        MobileGui = nil
+    end
+
+    if not enable then return end
+
+    local parentGui = pcall(function() return CoreGui end) and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
+    MobileGui = Instance.new("ScreenGui")
+    MobileGui.Name = "CrazyHub_MobileDeploy"
+    MobileGui.ResetOnSpawn = false
+    MobileGui.Parent = parentGui
+
+    local btn = Instance.new("TextButton")
+    btn.Name = "DeployButton"
+    btn.Size = UDim2.new(0, 110, 0, 42)
+    btn.Position = UDim2.new(0.85, -55, 0.7, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+    btn.BorderColor3 = Color3.fromRGB(45, 45, 55)
+    btn.BorderSizePixel = 1
+    btn.Text = "DEPLOY"
+    btn.TextColor3 = Color3.fromRGB(220, 220, 230)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 13
+    btn.Active = true
+    btn.Draggable = true
+    btn.Parent = MobileGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = btn
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1
+    stroke.Color = Color3.fromRGB(85, 95, 230)
+    stroke.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        DeployTowers()
+    end)
+end
+
+local Window = Library:CreateWindow({
+    Title = "CrazyHub | Unit dupe",
+    Center = true,
+    AutoShow = true,
+    TabPadding = 8,
+    MenuFadeTime = 0.2
+})
+
+local Tabs = {
+    Main = Window:AddTab("Deployment", "boxes"),
+    Settings = Window:AddTab("Settings", "sliders")
+}
+
+local LeftBox = Tabs.Main:AddLeftGroupbox("Configuration")
+
+LeftBox:AddDropdown("SelectTowerSlot", {
+    Text = "Tower Slot",
+    Values = {"Tower1", "Tower2", "Tower3", "Tower4", "Tower5", "Tower6"},
+    Default = 1,
+    Multi = false
+})
+
+LeftBox:AddSlider("PlacementAmount", {
+    Text = "Placement Count",
+    Default = 10,
+    Min = 1,
+    Max = 60,
+    Rounding = 0,
+    Compact = false
+})
+
+LeftBox:AddSlider("PlacementSpacing", {
+    Text = "Grid Spacing",
+    Default = 4,
+    Min = 1,
+    Max = 15,
+    Rounding = 1,
+    Compact = false
+})
+
+LeftBox:AddSlider("PlacementDelay", {
+    Text = "Interval Delay",
+    Default = 0.05,
+    Min = 0.01,
+    Max = 0.5,
+    Rounding = 2,
+    Compact = false
+})
+
+local RightBox = Tabs.Main:AddRightGroupbox("Execution")
+
+RightBox:AddButton({
+    Text = "Deploy Units",
+    Func = function()
+        DeployTowers()
+    end,
+    DoubleClick = false
+})
+
+RightBox:AddButton({
+    Text = "Claim Playtime Rewards",
+    Func = function()
+        ClaimPlayTimeRewards()
+    end,
+    DoubleClick = false
+})
+
+RightBox:AddToggle("MobileDeployButton", {
+    Text = "On-Screen Action Button",
+    Default = false,
+    Callback = function(Value)
+        ToggleMobileButton(Value)
+    end
+})
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+ThemeManager:SetFolder("CrazyHub")
+SaveManager:SetFolder("CrazyHub/AO")
+
+SaveManager:BuildConfigSection(Tabs.Settings)
+ThemeManager:ApplyToTab(Tabs.Settings)
+
+Library.ToggleKeybind = Options.MenuKeybind or Enum.KeyCode.RightControl
+
+Genv.UNITdupe_Unload = function()
+    if MobileGui then
+        MobileGui:Destroy()
+        MobileGui = nil
+    end
+    if Library then
+        Library:Unload()
+    end
+end
